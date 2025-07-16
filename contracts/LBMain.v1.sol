@@ -15,6 +15,7 @@ import { Rate } from "./utils/Rate.sol";
 import { Roles } from "./utils/Roles.sol";
 import "./LBToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {RayMath} from "./utils/RayMath.sol";
 
 
@@ -27,10 +28,6 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
 
     mapping (address => Constants.Status) blacklistedSuppliers;
     
-    // the token given to lenders
-    // for their share of liqudity to the pool
-    LBToken public lbToken;
-
     // a global flag which controls
     // if the contract can do any ops 
     // or not. 
@@ -49,8 +46,8 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         _;
     }
 
-    constructor() UserManager(msg.sender) {        
-        lbToken = new LBToken();
+    constructor() UserManager(msg.sender){
+        owner = msg.sender;
     }
 
     function setPriceOracleContract(address _priceOracle) public  {
@@ -70,7 +67,7 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         // require(userHasPermission(sender, Roles.CRITICAL_PROTOCOL_MANAGER), Errors.Forbidden(sender));
         require(amount > 0, Errors.InputIzZero());
         require(assetAddr != address(0), Errors.BadAddress());  
-        (bool exists, Types.Asset memory assetObj) = _getAsset(assetAddr);      
+        (bool exists, Types.Asset storage assetObj) = _getAsset(assetAddr);      
         require(exists, Errors.AssetNotFound(assetAddr));
         require(assetObj.active, Errors.AssetNotActive(assetAddr));
         require(contractIsActive, Errors.ContractIsNotActive());
@@ -79,8 +76,8 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
     
        uint256 scaledBalance = Rate.getScaledBalance(amount, newLiquidityIndex);
 
-       _updateSupply(assetAddr, scaledBalance);
-       _mintToSupplier(sender, scaledBalance);
+       _updateSupply(assetObj, scaledBalance);
+       _mintToSupplier(assetObj.wrapperToken, sender, scaledBalance);
     }
 
     function borrow(address assetToBorrow, address collateral, uint loanAmount) external {
@@ -89,7 +86,7 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         require(Roles.isUserBlacklisted(_usersRoles[sender]) == false, Errors.Forbidden(sender));
         require(loanAmount > 0, Errors.InputIzZero());
         require(assetToBorrow != address(0), Errors.BadAddress());  
-        (bool exists, Types.Asset memory assetObj) = _getAsset(assetToBorrow);      
+        (bool exists, Types.Asset storage assetObj) = _getAsset(assetToBorrow);      
         require(exists, Errors.AssetNotFound(assetToBorrow));
         require(assetObj.active, Errors.AssetNotActive(assetToBorrow));
         require(assetObj.borrowable, Errors.AssetNotBorrowable(assetToBorrow));
@@ -109,7 +106,8 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         require(maxLoanAllowed >= loanAmount, Errors.LoanExceedsCollateral(maxLoanAllowed));
 
         loanAmount = Rate.getDescaledBalance(loanAmount, newBorrowIndex);
-        Types.Loan memory loanObj = Types.Loan(assetToBorrow, sender, block.timestamp, assetObj.borrowRate, loanAmount, Constants.Status.Active);
+        Types.Loan memory loanObj = Types.Loan(assetToBorrow, collateral, sender, block.timestamp, 0, 0, assetObj.borrowRate, 
+            loanAmount, Constants.Status.Active);
 
         // recording the loan
         insertLoan(loanObj);
@@ -135,7 +133,12 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         uint256 descaledLoanAmount = Rate.getDescaledBalance(loanObj.amount, newBorrowIndex);
         require(amount >= descaledLoanAmount, Errors.LoanInsufficientRepayProvided());
 
-        // not
+        // getting the money back
+        ERC20(asset).transferFrom(msg.sender, address(this), amount);
+
+        // updating state
+        loanRepay(loanObj, amount);
+        releaseCollateral(msg.sender, loanObj.collateral);
     }
 
     
@@ -144,7 +147,7 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         ERC20(asset).transferFrom(sender, address(this), amount);
     }
 
-    function _getAsset(address asset) internal view returns (bool exists, Types.Asset memory obj) {
+    function _getAsset(address asset) internal view returns (bool exists, Types.Asset storage obj) {
         obj = assetsList[asset];
         if(obj.asset != address(0)) {
             exists = true;
@@ -191,14 +194,14 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         assetsList[asset].changedAt = block.timestamp;
     }
 
-    function _updateSupply(address asset, uint256 scaledBalance) internal returns (uint256 aTokenToMint) {
-        assetsList[asset].changedAt = block.timestamp;
-        assetsList[asset].scaledBalance = assetsList[asset].scaledBalance + scaledBalance;
+    function _updateSupply(Types.Asset storage assetObj, uint256 scaledBalance) internal returns (uint256 aTokenToMint) {
+        assetObj.changedAt = block.timestamp;
+        assetObj.scaledBalance = assetObj.scaledBalance + scaledBalance;
         aTokenToMint = scaledBalance;        
     }
 
-    function _mintToSupplier(address to, uint256 amount) internal {
-        lbToken.mint(to, amount);
+    function _mintToSupplier(address wrapperAsset, address to, uint256 amount) internal {
+        ILBToken(wrapperAsset).mint(to, amount);
     }
 
     function _userIsAllowed(address user, Constants.Action action) internal view returns (bool) {

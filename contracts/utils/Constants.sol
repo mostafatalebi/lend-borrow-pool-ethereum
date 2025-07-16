@@ -14,6 +14,10 @@ library Constants {
     }
 
     enum Status {
-        NotBlocked, Blocked, Active, InActive, PaidOff, Cancelled
+        NotBlocked, Blocked, Active, InActive, Repaid, Cancelled
+    }
+
+    enum CollStatus {
+        Locked, Released, Liquidified
     }
 }

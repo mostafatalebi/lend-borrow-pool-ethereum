@@ -6,7 +6,7 @@ export function GetEvent(contract: any, receipt: any, eventName: string) : any {
         try {
             const parsed = contract.interface.parseLog(log);
             if (parsed != null ){
-                return parsed.name === "Debug";
+                return parsed.name === eventName;
             }
         } catch {
             return;

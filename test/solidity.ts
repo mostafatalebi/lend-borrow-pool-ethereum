@@ -22,3 +22,7 @@ export function calculateLinearInterest(rate: bigint, timeDelta: bigint) : bigin
 export function getScaledBalance(amount: bigint, index: bigint) : bigint {
     return ((amount * Custom.Ray)+(index / 2n)) / index;
 }
+
+export function getDescaledBalance(amount: bigint, index: bigint) : bigint {
+    return amount * index / Custom.Ray;
+}

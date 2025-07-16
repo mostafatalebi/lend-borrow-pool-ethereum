@@ -7,6 +7,7 @@ import { Types } from "../utils/Types.sol";
 import { Constants } from "../utils/Constants.sol";
 import { Errors } from "../utils/Errors.sol";
 import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 abstract contract LoanManager {
 
@@ -24,21 +25,26 @@ abstract contract LoanManager {
     //      [user]              [asset]   [loan data]
     mapping (address => mapping(address => Types.Loan)) loans;
 
-    function lockAsCollateral(address asset, address user, uint256 amount) internal {
+    constructor() {
+        globalDefaultSetting = Types.UserTokenSetting(75, type(uint256).max, 0, true, true);
+    }
+
+    function lockAsCollateral(address collateralAsset, address user, uint256 amount) internal {
         Types.UserTokenSetting memory _setting = globalDefaultSetting;
         if(userSettings[user].exists == true){
             _setting = userSettings[user];
         }
         require(_setting.allowed, Errors.Forbidden(msg.sender));
-        require(usersBalances[user].balances[asset] >= amount, Errors.InsufficientBalance(usersBalances[user].balances[asset], amount));
-        require(usersBalances[user].collaterals[asset].amount == 0, Errors.AlreadyCollateralized());
+        require(usersBalances[user].balances[collateralAsset] >= amount, Errors.InsufficientBalance(usersBalances[user].balances[collateralAsset], amount));
+        require(usersBalances[user].collaterals[collateralAsset].amount == 0, Errors.AlreadyCollateralized());
 
         Types.Collateral memory _coll;
         _coll.borrower = user;
         _coll.ts = block.timestamp;   
         _coll.amount = amount;
-        _coll.asset = asset;
-        usersBalances[user].collaterals[asset] = _coll;
+        _coll.asset = collateralAsset;
+        _coll.status = Constants.CollStatus.Locked;
+        usersBalances[user].collaterals[collateralAsset] = _coll;
     }
 
     function handleCollateralization(address collateral, uint256 amount) internal {
@@ -84,7 +90,7 @@ abstract contract LoanManager {
     /// @param ratio the ratio, in wei, of the collateral asset to request for loan asset
     function maxLoan(address collateral, uint8 ltv, address user, uint256 ratio) internal returns (uint256 amountOut) {
         Types.Collateral memory _collateral = usersBalances[user].collaterals[collateral];
-        require(_collateral.amount > 0, Errors.NoCollateral());
+        require(_collateral.amount > 0, Errors.CollateralNotFound());
         require(ltv > 0, Errors.InputIzZero());        
         uint256 ltvAmount = Helpers.percentageInWei(_collateral.amount, ltv);
         amountOut         = Rate.getEquivalentRatio(ltvAmount, ratio);
@@ -120,6 +126,20 @@ abstract contract LoanManager {
 
     function getLoan(address user, address asset) internal view returns (Types.Loan storage) {
         return loans[user][asset];
+    }
+
+    function loanRepay(Types.Loan storage loanObj, uint256 repayAmount) internal {
+        loanObj.repayAmount = repayAmount;
+        loanObj.repaidAt = block.timestamp;
+        loanObj.status = Constants.Status.Repaid;
+    }
+
+    function releaseCollateral(address user, address asset) internal {
+        require(usersBalances[user].collaterals[asset].status == Constants.CollStatus.Locked, 
+                Errors.CollateralNotFound());
+
+        usersBalances[user].collaterals[asset].status = Constants.CollStatus.Released;
+        ERC20(asset).transfer(user, usersBalances[user].collaterals[asset].amount);
     }
 
 }

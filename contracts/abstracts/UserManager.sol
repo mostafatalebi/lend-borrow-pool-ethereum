@@ -41,7 +41,7 @@ abstract contract UserManager {
         owner = _owner;
     }
 
-    function changeOwner(address newOwner, uint8 oldOwnerNewRole) external onlyOwner {
+    function changeOwner(address newOwner, uint16 oldOwnerNewRole) external onlyOwner {
         require(newOwner != owner, "Aborted");
         address oldAdmin = owner;
         owner = newOwner;

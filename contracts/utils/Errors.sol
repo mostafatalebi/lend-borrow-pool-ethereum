@@ -18,7 +18,7 @@ library Errors {
     error MaxAmount(uint256 max, uint256 currentValue);
     // when loan and collateral assets are the same
     error LoopedBorrowing();
-    error NoCollateral();
+    error CollateralNotFound();
     error AlreadyCollateralized();
     error LoanExceedsCollateral(uint256 allowedMaxLoan);
     error MaxSupplyExceeded();

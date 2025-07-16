@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 
 import { Constants } from "./Constants.sol";
+import { LBToken } from "../LBToken.sol";
 
 library Types {
     struct Asset {
@@ -12,7 +13,11 @@ library Types {
         // can the asset be used as a collateral
         bool allowAsCollateral;
 
-        // ERC-20 address of its wrapperToken
+        // an instance of LBToken automatically
+        // created when asset is first saved
+        // @note this is a constructor time param
+        // and cannot be changed once the asset is 
+        // created for the first time
         address wrapperToken; 
 
         // if the asset is active or not
@@ -66,8 +71,11 @@ library Types {
 
     struct Loan {
         address asset;
+        address collateral;
         address borrower;
         uint256 loanedAt;
+        uint256 repaidAt;
+        uint256 repayAmount;
         uint256 fixedRate;
         uint256 amount;
         Constants.Status status;        
@@ -81,7 +89,7 @@ library Types {
         // in percentage; the amount of loan
         // allowed is this percent of the total
         // locked collateral
-        uint256 collaterlaThreshold;
+        uint256 collateralThreshold;
 
         // both of the following values are
         // in wei
@@ -100,6 +108,7 @@ library Types {
         uint256 ts;        
         // in wei
         uint256 amount;
+        Constants.CollStatus status;
     }
 
     struct UserBalance {
