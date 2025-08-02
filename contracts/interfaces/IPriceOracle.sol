@@ -5,7 +5,7 @@ pragma solidity ^0.8.20;
 // real implementation should benefit from the likes of
 // Chainlink 
 interface IPriceOracle  {
-
-    function setPrice(address a, address b, uint256 price) external;    
-    function getPrice(address a, address b) external view returns (uint256);
+    function setRatio(address a, address b, uint256 price) external;    
+    function getRatio(address a, address b) external view returns (uint256);
+    function getAmount(address a, address b, uint256 amount) external view returns (uint256);
 }

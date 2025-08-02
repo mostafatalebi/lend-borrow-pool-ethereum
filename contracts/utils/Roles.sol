@@ -52,20 +52,23 @@ library Roles {
     uint16 public constant ASSET_MANAGER             =  0x0011; // 0000000000010001
     uint16 public constant USER_MANAGER              =  0x0021; // 0000000000100001
     uint16 public constant PROTOCOL_MANAGER          =  0x0041; // 0000000001000001                                                          
+    uint16 public constant MINTER                    =  0x0081; // 0000000010000001                                                          
 
 
     // role types are useful for combining it for
     // other bits such as "EXISTENCE_BIT_INDEX" to 
     // enable blacklisting/whitelisting lenders/borrowers
+    // 1111000000000000 Four first bits from left are considered
+    // to be used for type assertions
     uint16 public constant USER_LENDER               =  0x8001;  // 1000000000000001;
     uint16 public constant USER_BORROWER             =  0x4001;  // 0100000000000001;
 
 
-    function combine(uint8 a, uint8 b)  internal pure returns (uint8) {
+    function combine(uint16 a, uint16 b)  internal pure returns (uint16) {
         return a & b;
     }
 
-    function hasPermission(uint8 roleBits, uint8 permission) internal pure returns (bool) {
+    function hasPermission(uint16 roleBits, uint16 permission) internal pure returns (bool) {
         require(permission < ROLES_BIT_SIZE, "out of range permission bit!");
         return (roleBits & (1 << permission)) != 0;
     }   

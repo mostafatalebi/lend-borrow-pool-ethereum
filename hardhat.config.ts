@@ -1,5 +1,6 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import '@typechain/hardhat';
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -7,7 +8,9 @@ const config: HardhatUserConfig = {
       settings: {
         optimizer: {
           enabled: true,
-        }
+          runs: 200
+        },
+        viaIR: true
       },
       
     },

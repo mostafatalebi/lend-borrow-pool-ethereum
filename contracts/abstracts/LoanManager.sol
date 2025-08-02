@@ -7,10 +7,10 @@ import { Types } from "../utils/Types.sol";
 import { Constants } from "../utils/Constants.sol";
 import { Errors } from "../utils/Errors.sol";
 import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
+import { PriceOracle } from "../oracle/PriceOracle.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 abstract contract LoanManager {
-
     IPriceOracle priceOracle;
 
     Types.UserTokenSetting private globalDefaultSetting;
@@ -29,21 +29,40 @@ abstract contract LoanManager {
         globalDefaultSetting = Types.UserTokenSetting(75, type(uint256).max, 0, true, true);
     }
 
-    function lockAsCollateral(address collateralAsset, address user, uint256 amount) internal {
+    function setPriceOracleContract(address _priceOracle) public  {
+        priceOracle = IPriceOracle(_priceOracle);
+    }
+
+    function getUserCollateral(address user, address asset) external view returns (Types.Collateral memory) {
+        return usersBalances[user].collaterals[asset];
+    }
+
+    function getUserBalance(address user, address asset) external view returns (uint256) {
+        return usersBalances[user].balances[asset];
+    }
+
+    function getUserLoan(address asset) external view returns (Types.Loan memory) {
+        return loans[msg.sender][asset];
+    }
+
+    function lockAsCollateral(address user, address collateralAsset, uint256 requestedCollAmount) internal {
         Types.UserTokenSetting memory _setting = globalDefaultSetting;
         if(userSettings[user].exists == true){
             _setting = userSettings[user];
         }
         require(_setting.allowed, Errors.Forbidden(msg.sender));
-        require(usersBalances[user].balances[collateralAsset] >= amount, Errors.InsufficientBalance(usersBalances[user].balances[collateralAsset], amount));
         require(usersBalances[user].collaterals[collateralAsset].amount == 0, Errors.AlreadyCollateralized());
+        require(usersBalances[user].balances[collateralAsset] >= requestedCollAmount, 
+                                Errors.InsufficientBalance(usersBalances[user].balances[collateralAsset], requestedCollAmount));
 
         Types.Collateral memory _coll;
-        _coll.borrower = user;
-        _coll.ts = block.timestamp;   
-        _coll.amount = amount;
-        _coll.asset = collateralAsset;
-        _coll.status = Constants.CollStatus.Locked;
+
+        _coll.borrower =        user;
+        _coll.ts       =        block.timestamp;   
+        _coll.amount   =        requestedCollAmount;
+        _coll.asset    =        collateralAsset;
+        _coll.status   =        Constants.CollStatus.Locked;
+
         usersBalances[user].collaterals[collateralAsset] = _coll;
     }
 
@@ -88,7 +107,8 @@ abstract contract LoanManager {
     /// @param ltv the amount of loanToValue of the original asset at the moment
     /// @param user the borrower's address
     /// @param ratio the ratio, in wei, of the collateral asset to request for loan asset
-    function maxLoan(address collateral, uint8 ltv, address user, uint256 ratio) internal returns (uint256 amountOut) {
+    function getMaxLoanAvailableByLockedCollateral(address collateral, uint8 ltv, address user, 
+                                uint256 ratio) internal returns (uint256 amountOut) {
         Types.Collateral memory _collateral = usersBalances[user].collaterals[collateral];
         require(_collateral.amount > 0, Errors.CollateralNotFound());
         require(ltv > 0, Errors.InputIzZero());        
@@ -116,7 +136,8 @@ abstract contract LoanManager {
     /// checkups. Since this is often a task of 
     /// of parent callers. 
     function insertLoan(Types.Loan memory _loan) internal {
-        require(loans[_loan.borrower][_loan.asset].status == Constants.Status.Active, Errors.UserHasActiveLoan());
+        Constants.Status existingLoanIfAnyStatus = loans[_loan.borrower][_loan.asset].status;
+        require(existingLoanIfAnyStatus != Constants.Status.Active, Errors.LoanStatusUnexpected(existingLoanIfAnyStatus));
         loans[_loan.borrower][_loan.asset] = _loan;
     }
 
@@ -126,6 +147,10 @@ abstract contract LoanManager {
 
     function getLoan(address user, address asset) internal view returns (Types.Loan storage) {
         return loans[user][asset];
+    }
+
+    function getLoanStatus(address user, address asset) internal view returns (Constants.Status) {
+        return loans[user][asset].status;
     }
 
     function loanRepay(Types.Loan storage loanObj, uint256 repayAmount) internal {

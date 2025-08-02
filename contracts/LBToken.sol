@@ -12,8 +12,6 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 
 contract LBToken is ILBToken, ERC20, LoanManager, UserManager {
-    address owner;
-
     // @todo add roles:
     // we need to add roles for minting and burning
     // in LBToken contract
@@ -23,7 +21,6 @@ contract LBToken is ILBToken, ERC20, LoanManager, UserManager {
 
     constructor(uint256 _totalSupply, string memory _name, string memory _symbol) ERC20(_name, _symbol)
         UserManager(msg.sender) {
-        owner = msg.sender;
         if(_totalSupply > 0){
             _mint(msg.sender, _totalSupply);
         }
@@ -37,5 +34,4 @@ contract LBToken is ILBToken, ERC20, LoanManager, UserManager {
         _burn(account, amount);
     }
 
-    
 }

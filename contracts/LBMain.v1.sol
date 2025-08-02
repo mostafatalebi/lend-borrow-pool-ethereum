@@ -6,6 +6,7 @@ import {IAssetManagerV1} from "./interfaces/IAssetManager.v1.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import { UserManager } from "./abstracts/UserManager.sol";
 import { LoanManager } from "./abstracts/LoanManager.sol";
+import "./abstracts/Shared.sol";
 
 import { PriceOracle } from "./oracle/PriceOracle.sol";
 import { Types } from "./utils/Types.sol";
@@ -13,28 +14,23 @@ import { Events } from "./utils/Events.sol";
 import { Errors } from "./utils/Errors.sol";
 import { Rate } from "./utils/Rate.sol";
 import { Roles } from "./utils/Roles.sol";
+import { Validator } from "./utils/Validator.sol";
+import { Helpers } from "./utils/Helpers.sol";
 import "./LBToken.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {RayMath} from "./utils/RayMath.sol";
+import { RayMath } from "./utils/RayMath.sol";
 
 
-contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
+contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager, Shared {
     using RayMath for uint256;
 
     mapping (address => Types.Asset) private assetsList;
-
-    address owner;
-
-    mapping (address => Constants.Status) blacklistedSuppliers;
     
     // a global flag which controls
     // if the contract can do any ops 
     // or not. 
     bool private contractIsActive;
-
-    // handling reenterancy
-    bool locked = false;
 
     modifier onlyAssetManager() {
         require(userHasPermission(msg.sender, Roles.ASSETM_BIT_INDEX), Errors.Forbidden(msg.sender));
@@ -47,12 +43,10 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
     }
 
     constructor() UserManager(msg.sender){
-        owner = msg.sender;
+
     }
 
-    function setPriceOracleContract(address _priceOracle) public  {
-        priceOracle = IPriceOracle(_priceOracle);
-    }
+
 
 
     function setContractActivation(bool _state) public onlyProtocolManager {
@@ -61,7 +55,6 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
 
     /// @inheritdoc ICoreLBV1
     function lend(address assetAddr, uint64 amount) external lock {
-        // _amountIsApproved(msg.sender, Addr, amount);
         address sender = msg.sender;
         require(Roles.isUserBlacklisted(_usersRoles[sender]) == false, Errors.Forbidden(sender));
         // require(userHasPermission(sender, Roles.CRITICAL_PROTOCOL_MANAGER), Errors.Forbidden(sender));
@@ -71,45 +64,52 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         require(exists, Errors.AssetNotFound(assetAddr));
         require(assetObj.active, Errors.AssetNotActive(assetAddr));
         require(contractIsActive, Errors.ContractIsNotActive());
+        uint256 currentAllowance = ERC20(assetAddr).allowance(msg.sender, address(this));
+        require(currentAllowance >= amount, Errors.AssetInsufficientAllowance(currentAllowance, amount));
 
        (uint256 newLiquidityIndex, ) = _updateIndexedInterests(assetAddr, assetObj);
     
        uint256 scaledBalance = Rate.getScaledBalance(amount, newLiquidityIndex);
 
-       _updateSupply(assetObj, scaledBalance);
+       ERC20(assetAddr).transferFrom(sender, address(this), amount);
+       _updateSupply(sender, assetObj, scaledBalance);
        _mintToSupplier(assetObj.wrapperToken, sender, scaledBalance);
     }
+    
+    function borrowWithCollateralAmount(address assetToBorrow, address collateral, uint256 collateralAmount)
+        external {
+            // @todo
+            // @todo we need to implement several public helper function for various ways 
+            // @todo of defining the loan amount by user. They call must eventually call
+            // @todo the borrow() function, but enables user to approach loans differently
+    }
 
-    function borrow(address assetToBorrow, address collateral, uint loanAmount) external {
+    function borrow(address assetToBorrow, address collateral, uint256 loanAmount) public {
         address sender = msg.sender;
-        require(assetToBorrow != collateral, Errors.LoopedBorrowing());
-        require(Roles.isUserBlacklisted(_usersRoles[sender]) == false, Errors.Forbidden(sender));
-        require(loanAmount > 0, Errors.InputIzZero());
-        require(assetToBorrow != address(0), Errors.BadAddress());  
-        (bool exists, Types.Asset storage assetObj) = _getAsset(assetToBorrow);      
-        require(exists, Errors.AssetNotFound(assetToBorrow));
-        require(assetObj.active, Errors.AssetNotActive(assetToBorrow));
-        require(assetObj.borrowable, Errors.AssetNotBorrowable(assetToBorrow));
-        require(contractIsActive, Errors.ContractIsNotActive());
-        require(loanAmount > assetObj.minBorrowAmount, Errors.MinAmount(assetObj.minBorrowAmount, loanAmount));
-        require(assetsList[collateral].asset != address(0), Errors.AssetNotFound(collateral));
-        require(hasActiveLoan(sender, assetToBorrow) == false, Errors.UserHasActiveLoan());
+        (bool exists, Types.Asset storage assetObj) = _getAsset(assetToBorrow);
+        (bool collExists, Types.Asset storage collAssetObj) = _getAsset(assetToBorrow);
+        
+        Validator.validateBorrow(assetToBorrow, 
+                collateral, 
+                sender, 
+                userGetRole(sender),
+                loanAmount,
+                getLoanStatus(sender, assetToBorrow), 
+                assetObj, 
+                collAssetObj);
+
         (uint256 newLiquidityIndex, uint256 newBorrowIndex) = _updateIndexedInterests(assetToBorrow, assetObj);
         
-        lockAsCollateral(sender, collateral, loanAmount);        
-
-        // @todo room for improvement; we can cache the result per each block
-        uint256 ratio = priceOracle.getPrice(collateral, assetToBorrow);
-
-        uint256 maxLoanAllowed = maxLoan(collateral, assetObj.ltv, sender, ratio);
-
-        require(maxLoanAllowed >= loanAmount, Errors.LoanExceedsCollateral(maxLoanAllowed));
+        uint256 _loanAmountConvertedToCollAsset = priceOracle.getAmount(assetToBorrow, collateral, loanAmount);
+        uint256 _requiredFinalCollateralAmount = Helpers.getCollateralOf(_loanAmountConvertedToCollAsset, assetObj.ltv);
+        
+        // locking the corresponding amount 
+        lockAsCollateral(sender, collateral, _requiredFinalCollateralAmount);        
 
         loanAmount = Rate.getDescaledBalance(loanAmount, newBorrowIndex);
         Types.Loan memory loanObj = Types.Loan(assetToBorrow, collateral, sender, block.timestamp, 0, 0, assetObj.borrowRate, 
             loanAmount, Constants.Status.Active);
-
-        // recording the loan
+        // registering the loan
         insertLoan(loanObj);
         
         // sending the loan to the user
@@ -194,23 +194,18 @@ contract LBMainV1 is ICoreLBV1, IAssetManagerV1, UserManager, LoanManager {
         assetsList[asset].changedAt = block.timestamp;
     }
 
-    function _updateSupply(Types.Asset storage assetObj, uint256 scaledBalance) internal returns (uint256 aTokenToMint) {
+    function _updateSupply(address lender, Types.Asset storage assetObj, uint256 scaledBalance) internal {
+        usersBalances[lender].balances[assetObj.asset] += scaledBalance;
         assetObj.changedAt = block.timestamp;
-        assetObj.scaledBalance = assetObj.scaledBalance + scaledBalance;
-        aTokenToMint = scaledBalance;        
+        assetObj.scaledBalance = assetObj.scaledBalance + scaledBalance;  
+
+        emit Events.SupplyAdded(lender, scaledBalance);
     }
 
     function _mintToSupplier(address wrapperAsset, address to, uint256 amount) internal {
         ILBToken(wrapperAsset).mint(to, amount);
     }
 
-    function _userIsAllowed(address user, Constants.Action action) internal view returns (bool) {
-        if(action == Constants.Action.Supply) {
-            return blacklistedSuppliers[user] == Constants.Status.Blocked ? false : true;
-        }
-        return true;
-    }
-    
     /// @inheritdoc IAssetManagerV1
     function setAsset(Types.Asset calldata _asset, address _sender) external lock {
         Types.Asset storage assetObj = assetsList[_asset.asset];

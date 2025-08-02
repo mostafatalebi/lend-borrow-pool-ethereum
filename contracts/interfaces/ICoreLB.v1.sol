@@ -31,7 +31,7 @@ interface ICoreLBV1 {
     /// @param loanAmount the amount, in wei, of the token 
     ///        provided as liquidity
     function borrow(address assetToBorrow, address collateral, uint loanAmount) external;
-
+    
     function withdraw(address assetAddr, uint64 amount, address to) external;
     function repay(address assetAddr, uint64 amount) external;
 }
